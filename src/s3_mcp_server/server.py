@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import logging
 import os
 from typing import List, Optional
-from mcp.types import Resource, LoggingLevel, EmptyResult
+from mcp.types import Resource, LoggingLevel, EmptyResult, Tool, TextContent, ImageContent, EmbeddedResource, CallToolResult
 
 from .resources.s3_resource import S3Resource
 
@@ -95,6 +95,57 @@ async def list_resources(start_after: Optional[str] = None) -> List[Resource]:
 
     logger.info(f"Returning {len(resources)} resources")
     return resources
+
+@server.list_tools()
+async def handle_list_tools() -> list[Tool]:
+    return [
+        Tool(
+            name="ListBuckets", # https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListBuckets.html
+            description="Returns a list of all buckets owned by the authenticated sender of the request. To grant IAM permission to use this operation, you must add the s3:ListAllMyBuckets policy action.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "bucket-region": {"type": "string", "description": "Limits the response to buckets that are located in the specified AWS Region. The AWS Region must be expressed according to the AWS Region code, such as us-west-2 for the US West (Oregon) Region."},
+                    "continuation-token": {"type": "string", "description": "ContinuationToken indicates to Amazon S3 that the list is being continued on this bucket with a token. ContinuationToken is obfuscated and is not a real key. You can use this ContinuationToken for pagination of the list results. Length Constraints: Minimum length of 0. Maximum length of 1024."},
+                    "max-buckets": {"type": "integer", "description": "Maximum number of buckets to be returned in response. When the number is more than the count of buckets that are owned by an AWS account, return all the buckets in response. Valid Range: Minimum value of 1. Maximum value of 10000."},
+                    "prefix": {"type": "string", "description": "Limits the response to bucket names that begin with the specified bucket name prefix."}
+                },
+                "required": [],
+            },
+        )
+    ]
+
+@server.call_tool()
+async def handle_call_tool(
+    name: str, arguments: dict | None
+) -> list[TextContent | ImageContent | EmbeddedResource]:
+    try:
+        match name:
+            case "ListBuckets":
+                buckets = await s3_resource.list_buckets(
+                    BucketRegion = arguments.get("bucket-region", None),
+                    ContinuationToken = arguments.get("continuation-token", None),
+                    MaxBuckets = arguments.get("max-buckets", None),
+                    Prefix = arguments.get("prefix", None)
+                )
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=buckets
+                        )
+                    ]
+                )
+    except Exception as error:
+        return CallToolResult(
+            isError=True,
+            content=[
+                TextContent(
+                    type="text",
+                    text=f"Error: {str(error)}"
+                )
+            ]
+        )
 
 async def main():
     # Run the server using stdin/stdout streams
