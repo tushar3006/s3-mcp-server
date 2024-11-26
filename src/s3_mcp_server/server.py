@@ -12,28 +12,19 @@ import aioboto3
 
 class S3ProtocolServer:
     def __init__(self, region_name: str = None, profile_name: str = None, max_buckets: int = 5):
-        """
-        Initialize aioboto3 session
-        Args:
-            region_name: AWS region name
-            profile_name: AWS profile name
-            max_buckets: Maximum number of buckets to process (default: 5)
-        """
         self.session = aioboto3.Session(profile_name="bedrock")
         self.region_name = region_name
         self.max_buckets = max_buckets
 
     async def list_buckets(self, start_after: Optional[str] = None) -> List[dict]:
         """
-        List S3 buckets using async client with pagination
-        Args:
-            start_after: Start listing after this bucket name
+        List S3 buckets with pagination
         """
         async with self.session.client('s3', region_name=self.region_name) as s3:
             response = await s3.list_buckets()
             buckets = response.get('Buckets', [])
 
-            # Filter buckets if start_after is provided
+            # Filter
             if start_after:
                 buckets = [b for b in buckets if b['Name'] > start_after]
 
@@ -41,13 +32,7 @@ class S3ProtocolServer:
             return buckets[:self.max_buckets]
 
     async def list_objects(self, bucket_name: str, prefix: str = "", max_keys: int = 1000) -> List[dict]:
-        """
-        List objects in a specific bucket using async client with pagination
-        Args:
-            bucket_name: Name of the S3 bucket
-            prefix: Object prefix for filtering
-            max_keys: Maximum number of keys to return
-        """
+        #List objects
         async with self.session.client('s3', region_name=self.region_name) as s3:
             response = await s3.list_objects_v2(
                 Bucket=bucket_name,
@@ -57,12 +42,11 @@ class S3ProtocolServer:
             return response.get('Contents', [])
 
     async def get_object(self, bucket_name: str, key: str) -> Dict[str, Any]:
-        """Get object from S3 using async client"""
         async with self.session.client('s3', region_name=self.region_name) as s3:
             return await s3.get_object(Bucket=bucket_name, Key=key)
 
     def is_text_file(self, key: str) -> bool:
-        """Determine if a file is text-based by its extension"""
+        """Determinr if file extenstion is a text"""
         text_extensions = {
             '.txt', '.log', '.json', '.xml', '.yml', '.yaml', '.md',
             '.csv', '.ini', '.conf', '.py', '.js', '.html', '.css',
@@ -77,10 +61,10 @@ server = Server("s3_service")
 # Load environment variables
 load_dotenv()
 
-# Initialize protocol server with configurable max_buckets
+# Protocol server initialization
 s3_server = S3ProtocolServer(region_name="us-east-1", max_buckets=5)
 
-# Configure logging
+# logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("s3-mcp-server")
 
@@ -97,9 +81,7 @@ async def set_logging_level(level: LoggingLevel) -> EmptyResult:
 @server.list_resources()
 async def list_resources(start_after: Optional[str] = None) -> List[Resource]:
     """
-    List S3 buckets and their contents as resources with pagination
-    Args:
-        start_after: Start listing after this bucket name
+    MCP resource discovery
     """
     resources = []
     logger.debug("Starting to list resources")
@@ -134,7 +116,7 @@ async def list_resources(start_after: Optional[str] = None) -> List[Resource]:
             except Exception as e:
                 logger.error(f"Error listing objects in bucket {bucket_name}: {str(e)}")
 
-        # Use semaphore to limit concurrent bucket processing
+        # limit concurrent bucket processing
         semaphore = asyncio.Semaphore(3)  # Limit concurrent bucket processing
         async def process_bucket_with_semaphore(bucket):
             async with semaphore:
