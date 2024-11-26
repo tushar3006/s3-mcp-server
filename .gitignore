@@ -10,3 +10,5 @@ wheels/
 .venv
 #Ignore jetbrains
 .idea/
+#ignore environment file
+.env
