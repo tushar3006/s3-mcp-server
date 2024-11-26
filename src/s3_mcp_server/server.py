@@ -10,6 +10,7 @@ from typing import List, Optional
 from mcp.types import Resource, LoggingLevel, EmptyResult, Tool, TextContent, ImageContent, EmbeddedResource, CallToolResult
 
 from .resources.s3_resource import S3Resource
+from pydantic import AnyUrl
 
 # Initialize server
 server = Server("s3_service")
@@ -98,6 +99,62 @@ async def list_resources(start_after: Optional[str] = None) -> List[Resource]:
 
     logger.info(f"Returning {len(resources)} resources")
     return resources
+
+
+
+@server.read_resource()
+async def read_resource(uri: AnyUrl) -> str:
+    """Read content from an S3 resource"""
+    uri_str = str(uri)
+    logger.debug(f"Reading resource: {uri_str}")
+
+    if not uri_str.startswith("s3://"):
+        raise ValueError("Invalid S3 URI")
+
+    # Parse the S3 URI
+    from urllib.parse import unquote
+    path = uri_str[5:]  # Remove "s3://"
+    path = unquote(path)  # Decode URL-encoded characters
+    parts = path.split("/", 1)
+
+    if len(parts) < 2:
+        raise ValueError("Invalid S3 URI format")
+
+    bucket_name = parts[0]
+    key = parts[1]
+
+    logger.debug(f"Attempting to read - Bucket: {bucket_name}, Key: {key}")
+
+    try:
+        response = await s3_resource.get_object(bucket_name, key)
+
+        if 'Body' in response:
+            if isinstance(response['Body'], bytes):
+                data = response['Body']
+            else:
+                # Handle streaming response
+                async with response['Body'] as stream:
+                    data = await stream.read()
+
+            if s3_resource.is_text_file(key):
+                return data.decode('utf-8')
+            else:
+                import base64
+                return base64.b64encode(data).decode('utf-8')
+        else:
+            raise ValueError("No data in response body")
+
+    except Exception as e:
+        logger.error(f"Error reading object {key} from bucket {bucket_name}: {str(e)}")
+        if 'NoSuchKey' in str(e):
+            try:
+                # List similar objects to help debugging
+                objects = await s3_resource.list_objects(bucket_name, prefix=key.split('/')[0])
+                similar_objects = [obj['Key'] for obj in objects if 'Key' in obj]
+                logger.debug(f"Similar objects found: {similar_objects}")
+            except Exception as list_err:
+                logger.error(f"Error listing similar objects: {str(list_err)}")
+        raise ValueError(f"Error reading resource: {str(e)}")
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
