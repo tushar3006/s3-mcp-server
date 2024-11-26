@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 from mcp.types import Resource, LoggingLevel, EmptyResult
 import aioboto3
 
+logger = logging.getLogger("mcp_s3_server")
 
 class S3ProtocolServer:
     def __init__(self, region_name: str = None, profile_name: str = None, max_buckets: int = 5):
@@ -64,9 +65,6 @@ load_dotenv()
 # Protocol server initialization
 s3_server = S3ProtocolServer(region_name="us-east-1", max_buckets=5)
 
-# logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger("s3-mcp-server")
 
 @server.set_logging_level()
 async def set_logging_level(level: LoggingLevel) -> EmptyResult:
@@ -74,7 +72,7 @@ async def set_logging_level(level: LoggingLevel) -> EmptyResult:
     await server.request_context.session.send_log_message(
         level="info",
         data=f"Log level set to {level}",
-        logger="s3-mcp-server"
+        logger="mcp_s3_server"
     )
     return EmptyResult()
 
