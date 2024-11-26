@@ -1,4 +1,5 @@
 import asyncio
+import boto3
 from mcp.server.models import InitializationOptions
 from mcp.server import NotificationOptions, Server, McpError
 import mcp.server.stdio
@@ -28,6 +29,8 @@ s3_resource = S3Resource(
     region_name=os.getenv('AWS_REGION', 'us-east-1'),
     max_buckets=max_buckets
 )
+
+boto3_s3_client = boto3.client('s3')
 
 @server.set_logging_level()
 async def set_logging_level(level: LoggingLevel) -> EmptyResult:
@@ -105,10 +108,10 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "bucket-region": {"type": "string", "description": "Limits the response to buckets that are located in the specified AWS Region. The AWS Region must be expressed according to the AWS Region code, such as us-west-2 for the US West (Oregon) Region."},
-                    "continuation-token": {"type": "string", "description": "ContinuationToken indicates to Amazon S3 that the list is being continued on this bucket with a token. ContinuationToken is obfuscated and is not a real key. You can use this ContinuationToken for pagination of the list results. Length Constraints: Minimum length of 0. Maximum length of 1024."},
-                    "max-buckets": {"type": "integer", "description": "Maximum number of buckets to be returned in response. When the number is more than the count of buckets that are owned by an AWS account, return all the buckets in response. Valid Range: Minimum value of 1. Maximum value of 10000."},
-                    "prefix": {"type": "string", "description": "Limits the response to bucket names that begin with the specified bucket name prefix."}
+                    "BucketRegion": {"type": "string", "description": "Limits the response to buckets that are located in the specified AWS Region. The AWS Region must be expressed according to the AWS Region code, such as us-west-2 for the US West (Oregon) Region."},
+                    "ContinuationToken": {"type": "string", "description": "ContinuationToken indicates to Amazon S3 that the list is being continued on this bucket with a token. ContinuationToken is obfuscated and is not a real key. You can use this ContinuationToken for pagination of the list results. Length Constraints: Minimum length of 0. Maximum length of 1024."},
+                    "MaxBuckets": {"type": "integer", "description": "Maximum number of buckets to be returned in response. When the number is more than the count of buckets that are owned by an AWS account, return all the buckets in response. Valid Range: Minimum value of 1. Maximum value of 10000."},
+                    "Prefix": {"type": "string", "description": "Limits the response to bucket names that begin with the specified bucket name prefix."}
                 },
                 "required": [],
             },
@@ -122,30 +125,20 @@ async def handle_call_tool(
     try:
         match name:
             case "ListBuckets":
-                buckets = await s3_resource.list_buckets(
-                    BucketRegion = arguments.get("bucket-region", None),
-                    ContinuationToken = arguments.get("continuation-token", None),
-                    MaxBuckets = arguments.get("max-buckets", None),
-                    Prefix = arguments.get("prefix", None)
-                )
-                return CallToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=buckets
-                        )
-                    ]
-                )
+                buckets = boto3_s3_client.list_buckets(**arguments)
+                return [
+                    TextContent(
+                        type="text",
+                        text=str(buckets)
+                    )
+                ]
     except Exception as error:
-        return CallToolResult(
-            isError=True,
-            content=[
-                TextContent(
-                    type="text",
-                    text=f"Error: {str(error)}"
-                )
-            ]
-        )
+        return [
+            TextContent(
+                type="text",
+                text=f"Error: {str(error)}"
+            )
+        ]
 
 async def main():
     # Run the server using stdin/stdout streams
