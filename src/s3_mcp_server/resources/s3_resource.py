@@ -2,8 +2,10 @@ import logging
 import os
 from typing import List, Dict, Any, Optional
 import aioboto3
+import asyncio
+from botocore.config import Config
 
-logger = logging.getLogger("s3-mcp-server")
+logger = logging.getLogger("s3_mcp_server")
 
 class S3Resource:
     """
@@ -13,12 +15,23 @@ class S3Resource:
 
     def __init__(self, region_name: str = None, profile_name: str = None, max_buckets: int = 5):
         """
-        Initialize S3 resource provider
-        Args:
-            region_name: AWS region name
-            profile_name: AWS profile name
-            max_buckets: Maximum number of buckets to process (default: 5)
-        """
+              Initialize S3 resource provider
+              Args:
+                  region_name: AWS region name
+                  profile_name: AWS profile name
+                  max_buckets: Maximum number of buckets to process (default: 5)
+              """
+        # Configure boto3 with retries and timeouts
+        self.config = Config(
+            retries=dict(
+                max_attempts=3,
+                mode='adaptive'
+            ),
+            connect_timeout=5,
+            read_timeout=60,
+            max_pool_connections=50
+        )
+
         self.session = aioboto3.Session(profile_name="bedrock")
         self.region_name = region_name
         self.max_buckets = max_buckets
@@ -90,7 +103,7 @@ class S3Resource:
             prefix: Object prefix for filtering
             max_keys: Maximum number of keys to return
         """
-        # Check if bucket is in configured list (if any)
+        #
         if self.configured_buckets and bucket_name not in self.configured_buckets:
             logger.warning(f"Bucket {bucket_name} not in configured bucket list")
             return []
@@ -103,13 +116,61 @@ class S3Resource:
             )
             return response.get('Contents', [])
 
-    async def get_object(self, bucket_name: str, key: str) -> Dict[str, Any]:
-        """Get object from S3 using async client"""
+    async def get_object(self, bucket_name: str, key: str, max_retries: int = 3) -> Dict[str, Any]:
+        """
+              Get object from S3 using async client with retry logic
+              Args:
+                  bucket_name: Name of the S3 bucket
+                  key: Object key
+                  max_retries: Maximum number of retry attempts
+              """
         if self.configured_buckets and bucket_name not in self.configured_buckets:
             raise ValueError(f"Bucket {bucket_name} not in configured bucket list")
 
-        async with self.session.client('s3', region_name=self.region_name) as s3:
-            return await s3.get_object(Bucket=bucket_name, Key=key)
+        attempt = 0
+        last_exception = None
+
+        while attempt < max_retries:
+            try:
+                async with self.session.client('s3',
+                                               region_name=self.region_name,
+                                               config=self.config) as s3:
+                    # check file  size
+                    head_response = await s3.head_object(Bucket=bucket_name, Key=key)
+                    size = head_response.get('ContentLength', 0)
+
+                    if size > 10 * 1024 * 1024:  # If file is larger than 10MB
+                        logger.debug(f"Large file detected ({size/1024/1024:.2f}MB), using chunked download")
+                        # For large files, stream the content
+                        response = await s3.get_object(Bucket=bucket_name, Key=key)
+                        chunks = []
+                        async with response['Body'] as stream:
+                            while True:
+                                chunk = await stream.read(8192)  # Read in 8KB chunks
+                                if not chunk:
+                                    break
+                                chunks.append(chunk)
+                        response['Body'] = b''.join(chunks)
+                        return response
+                    else:
+                        # smaller files, download directly
+                        return await s3.get_object(Bucket=bucket_name, Key=key)
+
+            except Exception as e:
+                last_exception = e
+                if 'NoSuchKey' in str(e):
+                    # Don't retry if the key doesn't exist
+                    raise
+
+                attempt += 1
+                if attempt < max_retries:
+                    wait_time = 2 ** attempt  # Exponential backoff
+                    logger.warning(f"Attempt {attempt} failed, retrying in {wait_time} seconds: {str(e)}")
+                    await asyncio.sleep(wait_time)
+                continue
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception or Exception("Failed to get object after all retries")
 
     def is_text_file(self, key: str) -> bool:
         """Determine if a file is text-based by its extension"""
