@@ -71,7 +71,7 @@ async def list_resources(start_after: Optional[str] = None) -> List[Resource]:
                 for obj in objects:
                     if 'Key' in obj and not obj['Key'].endswith('/'):
                         object_key = obj['Key']
-                        mime_type = "text/plain" if s3_resource.is_text_file(object_key) else "application/json"
+                        mime_type = "text/plain" if s3_resource.is_text_file(object_key) else "text/markdown"
 
                         resource = Resource(
                             uri=f"s3://{bucket_name}/{object_key}",
@@ -127,6 +127,7 @@ async def read_resource(uri: AnyUrl) -> str:
 
     try:
         response = await s3_resource.get_object(bucket_name, key)
+        logger.debug(f"Get object *********response*******: {response}")
 
         if 'Body' in response:
             if isinstance(response['Body'], bytes):

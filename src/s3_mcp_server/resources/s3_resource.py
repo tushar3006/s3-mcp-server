@@ -32,7 +32,7 @@ class S3Resource:
             max_pool_connections=50
         )
 
-        self.session = aioboto3.Session(profile_name="bedrock")
+        self.session = aioboto3.Session()
         self.region_name = region_name
         self.max_buckets = max_buckets
         self.configured_buckets = self._get_configured_buckets()
@@ -118,58 +118,47 @@ class S3Resource:
 
     async def get_object(self, bucket_name: str, key: str, max_retries: int = 3) -> Dict[str, Any]:
         """
-              Get object from S3 using async client with retry logic
-              Args:
-                  bucket_name: Name of the S3 bucket
-                  key: Object key
-                  max_retries: Maximum number of retry attempts
-              """
+        Get object from S3 using streaming to handle large files and PDFs reliably.
+        The method reads the stream in chunks and concatenates them before returning.
+        """
         if self.configured_buckets and bucket_name not in self.configured_buckets:
             raise ValueError(f"Bucket {bucket_name} not in configured bucket list")
 
         attempt = 0
         last_exception = None
+        chunk_size = 69 * 1024  # Using same chunk size as example for proven performance
 
         while attempt < max_retries:
             try:
                 async with self.session.client('s3',
                                                region_name=self.region_name,
                                                config=self.config) as s3:
-                    # check file  size
-                    head_response = await s3.head_object(Bucket=bucket_name, Key=key)
-                    size = head_response.get('ContentLength', 0)
 
-                    if size > 10 * 1024 * 1024:  # If file is larger than 10MB
-                        logger.debug(f"Large file detected ({size/1024/1024:.2f}MB), using chunked download")
-                        # For large files, stream the content
-                        response = await s3.get_object(Bucket=bucket_name, Key=key)
-                        chunks = []
-                        async with response['Body'] as stream:
-                            while True:
-                                chunk = await stream.read(8192)  # Read in 8KB chunks
-                                if not chunk:
-                                    break
-                                chunks.append(chunk)
-                        response['Body'] = b''.join(chunks)
-                        return response
-                    else:
-                        # smaller files, download directly
-                        return await s3.get_object(Bucket=bucket_name, Key=key)
+                    # Get the object and its stream
+                    response = await s3.get_object(Bucket=bucket_name, Key=key)
+                    stream = response['Body']
+
+                    # Read the entire stream in chunks
+                    chunks = []
+                    async for chunk in stream:
+                        chunks.append(chunk)
+
+                    # Replace the stream with the complete data
+                    response['Body'] = b''.join(chunks)
+                    return response
 
             except Exception as e:
                 last_exception = e
                 if 'NoSuchKey' in str(e):
-                    # Don't retry if the key doesn't exist
                     raise
 
                 attempt += 1
                 if attempt < max_retries:
-                    wait_time = 2 ** attempt  # Exponential backoff
+                    wait_time = 2 ** attempt
                     logger.warning(f"Attempt {attempt} failed, retrying in {wait_time} seconds: {str(e)}")
                     await asyncio.sleep(wait_time)
                 continue
 
-        # If we've exhausted all retries, raise the last exception
         raise last_exception or Exception("Failed to get object after all retries")
 
     def is_text_file(self, key: str) -> bool:
