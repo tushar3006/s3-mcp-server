@@ -1,21 +1,10 @@
-# Sample of an MCP Server for S3
+# Sample of an MCP Server for AWS S3
 
-A MCP server project
+An MCP server implementation for retrieving  data such as PDF's from S3.
 
-## Components
+## Features
+[TODO: Add feature details specific to Implemnetation]
 
-### Resources
-
-The server implements a simple note storage system with:
-- Custom note:// URI scheme for accessing individual notes
-- Each note resource has a name, description and text/plain mimetype
-
-### Prompts
-
-The server provides a single prompt:
-- summarize-notes: Creates summaries of all stored notes
-  - Optional "style" argument to control detail level (brief/detailed)
-  - Generates prompt combining all current notes with style preference
 
 ### Tools
 
@@ -39,7 +28,8 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 
 <details>
   <summary>Development/Unpublished Servers Configuration</summary>
-  ```
+```json
+{
   "mcpServers": {
     "s3-mcp-server": {
       "command": "uv",
@@ -51,12 +41,15 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
       ]
     }
   }
-  ```
+}
+```
 </details>
 
 <details>
   <summary>Published Servers Configuration</summary>
-  ```
+
+```json
+{
   "mcpServers": {
     "s3-mcp-server": {
       "command": "uvx",
@@ -65,6 +58,7 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
       ]
     }
   }
+}
   ```
 </details>
 
