@@ -16,10 +16,10 @@ The server implements one tool:
 ## Configuration
 
 [TODO: Add configuration details specific to your implementation]
+### Setting up AWS Credentials
+1. Obtain AWS access key ID, secret access key, and region from the AWS Management Console.
 
-## Quickstart
-
-### Install
+### Usage with Claude Desktop
 
 #### Claude Desktop
 
@@ -28,6 +28,7 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 
 <details>
   <summary>Development/Unpublished Servers Configuration</summary>
+
 ```json
 {
   "mcpServers": {
@@ -43,6 +44,7 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
   }
 }
 ```
+
 </details>
 
 <details>
