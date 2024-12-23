@@ -45,7 +45,7 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
       "command": "uv",
       "args": [
         "--directory",
-        "/Users/tonouma/aws/thought_leadership/generative_ai/model_context_protocol/s3-mcp-server",
+        "/Users/user/generative_ai/model_context_protocol/s3-mcp-server",
         "run",
         "s3-mcp-server"
       ]
@@ -104,7 +104,7 @@ experience, we strongly recommend using the [MCP Inspector](https://github.com/m
 You can launch the MCP Inspector via [`npm`](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) with this command:
 
 ```bash
-npx @modelcontextprotocol/inspector uv --directory /Users/tonouma/aws/thought_leadership/generative_ai/model_context_protocol/s3-mcp-server run s3-mcp-server
+npx @modelcontextprotocol/inspector uv --directory /Users/user/generative_ai/model_context_protocol/s3-mcp-server run s3-mcp-server
 ```
 
 
