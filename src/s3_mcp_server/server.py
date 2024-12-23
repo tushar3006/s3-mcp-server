@@ -1,4 +1,6 @@
 import asyncio
+from importlib.resources import contents
+
 import boto3
 from mcp.server.models import InitializationOptions
 from mcp.server import NotificationOptions, Server, McpError
@@ -6,11 +8,13 @@ import mcp.server.stdio
 from dotenv import load_dotenv
 import logging
 import os
-from typing import List, Optional
-from mcp.types import Resource, LoggingLevel, EmptyResult, Tool, TextContent, ImageContent, EmbeddedResource, CallToolResult
+from typing import List, Optional, Dict
+from mcp.types import Resource, LoggingLevel, EmptyResult, Tool, TextContent, ImageContent, EmbeddedResource, BlobResourceContents, ReadResourceResult
 
 from .resources.s3_resource import S3Resource
 from pydantic import AnyUrl
+
+import base64
 
 # Initialize server
 server = Server("s3_service")
@@ -59,7 +63,7 @@ async def list_resources(start_after: Optional[str] = None) -> List[Resource]:
         buckets = await s3_resource.list_buckets(start_after)
         logger.debug(f"Processing {len(buckets)} buckets (max: {s3_resource.max_buckets})")
 
-        # Process buckets concurrently with semaphore to limit concurrent operations
+        # limit concurrent operations
         async def process_bucket(bucket):
             bucket_name = bucket['Name']
             logger.debug(f"Processing bucket: {bucket_name}")
@@ -104,7 +108,12 @@ async def list_resources(start_after: Optional[str] = None) -> List[Resource]:
 
 @server.read_resource()
 async def read_resource(uri: AnyUrl) -> str:
-    """Read content from an S3 resource"""
+    """
+    Read content from an S3 resource and return structured response
+
+    Returns:
+        Dict containing 'contents' list with uri, mimeType, and text for each resource
+    """
     uri_str = str(uri)
     logger.debug(f"Reading resource: {uri_str}")
 
@@ -127,7 +136,19 @@ async def read_resource(uri: AnyUrl) -> str:
 
     try:
         response = await s3_resource.get_object(bucket_name, key)
-        logger.debug(f"Get object *********response*******: {response}")
+        content_type = response.get("ContentType", "")
+        logger.debug(f"Read MIMETYPE response: {content_type}")
+
+        # Content type mapping for specific file types
+        content_type_mapping = {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "application/markdown",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "application/csv",
+            "application/vnd.ms-excel": "application/csv"
+        }
+
+        # Check if content type needs to be modified
+        export_mime_type = content_type_mapping.get(content_type, content_type)
+        logger.debug(f"Export MIME type: {export_mime_type}")
 
         if 'Body' in response:
             if isinstance(response['Body'], bytes):
@@ -137,11 +158,31 @@ async def read_resource(uri: AnyUrl) -> str:
                 async with response['Body'] as stream:
                     data = await stream.read()
 
+            # Process the data based on file type
             if s3_resource.is_text_file(key):
-                return data.decode('utf-8')
+                # text_content = data.decode('utf-8')
+                text_content = base64.b64encode(data).decode('utf-8')
+
+                return text_content
             else:
-                import base64
-                return base64.b64encode(data).decode('utf-8')
+                text_content = str(base64.b64encode(data))
+
+                result = ReadResourceResult(
+                    contents=[
+                        BlobResourceContents(
+                            blob=text_content,
+                            uri=uri_str,
+                            mimeType=export_mime_type
+                        )
+                    ]
+                )
+
+                logger.debug(result)
+
+                return text_content
+
+
+
         else:
             raise ValueError("No data in response body")
 
@@ -156,6 +197,7 @@ async def read_resource(uri: AnyUrl) -> str:
             except Exception as list_err:
                 logger.error(f"Error listing similar objects: {str(list_err)}")
         raise ValueError(f"Error reading resource: {str(e)}")
+
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:

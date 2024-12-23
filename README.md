@@ -1,4 +1,4 @@
-# s3-mcp-server MCP server
+# Sample of an MCP Server for S3
 
 A MCP server project
 
@@ -109,3 +109,12 @@ npx @modelcontextprotocol/inspector uv --directory /Users/tonouma/aws/thought_le
 
 
 Upon launching, the Inspector will display a URL that you can access in your browser to begin debugging.
+
+
+## Security
+
+See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+
+## License
+
+This library is licensed under the MIT-0 License. See the LICENSE file.
