@@ -7,17 +7,20 @@ An MCP server implementation for retrieving  data such as PDF's from S3.
 
 
 ### Tools
+- **ListBuckets**
+  - Returns a list of all buckets owned by the authenticated sender of the request
+- **ListObjectsV2**
+  - Returns some or all (up to 1,000) of the objects in a bucket with each request
+- **GetObject**
+  - Retrieves an object from Amazon S3. In the GetObject request, specify the full key name for the object. General purpose buckets - Both the virtual-hosted-style requests and the path-style requests are supported
 
-The server implements one tool:
-- add-note: Adds a new note to the server
-  - Takes "name" and "content" as required string arguments
-  - Updates server state and notifies clients of resource changes
 
 ## Configuration
 
 [TODO: Add configuration details specific to your implementation]
 ### Setting up AWS Credentials
 1. Obtain AWS access key ID, secret access key, and region from the AWS Management Console.
+2. Ensure these credentials have appropriate permissions for AWS S3.
 
 ### Usage with Claude Desktop
 
