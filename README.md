@@ -3,7 +3,8 @@
 An MCP server implementation for retrieving  data such as PDF's from S3.
 
 ## Features
-[TODO: Add feature details specific to Implemnetation]
+### Resources
+Expose AWS S3 Data through **Resources**. Currently only **PDF** documents supported and limited to **1000** objects.
 
 
 ### Tools
