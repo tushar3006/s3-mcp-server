@@ -19,8 +19,8 @@ Expose AWS S3 Data through **Resources**. (think of these sort of like GET endpo
 ## Configuration
 
 ### Setting up AWS Credentials
-1. Obtain AWS access key ID, secret access key, and region from the AWS Management Console.
-2. Ensure these credentials have appropriate permissions for AWS S3.
+1. Obtain AWS access key ID, secret access key, and region from the AWS Management Console and configure credentials files using **Default** profile as shown [**here**](https://docs.aws.amazon.com/cli/v1/userguide/cli-configure-files.html)
+2. Ensure these credentials have appropriate permission READ/WRITE  permissions for S3.
 
 ### Usage with Claude Desktop
 
