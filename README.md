@@ -1,10 +1,10 @@
-# Sample of an MCP Server for AWS S3
+# Sample S3 Model Context Protocol Server
 
 An MCP server implementation for retrieving  data such as PDF's from S3.
 
 ## Features
 ### Resources
-Expose AWS S3 Data through **Resources**. Currently only **PDF** documents supported and limited to **1000** objects.
+Expose AWS S3 Data through **Resources**. (think of these sort of like GET endpoints; they are used to load information into the LLM's context). Currently only **PDF** documents supported and limited to **1000** objects.
 
 
 ### Tools
@@ -18,7 +18,6 @@ Expose AWS S3 Data through **Resources**. Currently only **PDF** documents suppo
 
 ## Configuration
 
-[TODO: Add configuration details specific to your implementation]
 ### Setting up AWS Credentials
 1. Obtain AWS access key ID, secret access key, and region from the AWS Management Console.
 2. Ensure these credentials have appropriate permissions for AWS S3.
