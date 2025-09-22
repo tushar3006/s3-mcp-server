@@ -1,7 +1,6 @@
 import asyncio
 from importlib.resources import contents
 
-import boto3
 from mcp.server.models import InitializationOptions
 from mcp.server import NotificationOptions, Server, McpError
 import mcp.server.stdio
@@ -11,10 +10,12 @@ import os
 from typing import List, Optional, Dict
 from mcp.types import Resource, LoggingLevel, EmptyResult, Tool, TextContent, ImageContent, EmbeddedResource, BlobResourceContents, ReadResourceResult
 
-from .resources.s3_resource import S3Resource
+from .resources.s3_resource import S3Resource, initialize_s3_client
 from pydantic import AnyUrl
 
 import base64
+import mimetypes
+import re
 
 # Initialize server
 server = Server("s3_service")
@@ -29,13 +30,11 @@ logger = logging.getLogger("mcp_s3_server")
 # Get max buckets from environment or use default
 max_buckets = int(os.getenv('S3_MAX_BUCKETS', '5'))
 
-# Initialize S3 resource
+# Initialize S3 client and resource
+initialize_s3_client()
 s3_resource = S3Resource(
-    region_name=os.getenv('AWS_REGION', 'us-east-1'),
     max_buckets=max_buckets
 )
-
-boto3_s3_client = boto3.client('s3')
 
 @server.set_logging_level()
 async def set_logging_level(level: LoggingLevel) -> EmptyResult:
@@ -245,6 +244,21 @@ async def handle_list_tools() -> list[Tool]:
                 },
                 "required": ["Bucket", "Key"]
             }
+        ),
+        Tool(
+            name="PutObject", # https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
+            description="Adds spreadsheet and Excel files to the protex-intelligence-artifacts bucket ONLY. This tool is restricted to upload ONLY .xls, .xlsx, and .csv files to the 'protex-intelligence-artifacts' bucket for security purposes. All other file types will be rejected. You must have WRITE permissions on the bucket to add an object to it. Supports both local file paths and direct base64 content. Provide either 'Body' (for base64 content) OR 'FilePath' (for local file upload).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "Bucket": {"type": "string", "description": "The bucket name to which the PUT action was initiated. MUST be 'protex-intelligence-artifacts' - uploads to other buckets will be rejected.", "enum": ["protex-intelligence-artifacts"]},
+                    "Key": {"type": "string", "description": "Object key for which the PUT action was initiated. This will be the file path/name in the bucket. MUST end with .xls, .xlsx, or .csv extension - other file types will be rejected. Length Constraints: Minimum length of 1."},
+                    "Body": {"type": "string", "description": "Object data as base64 encoded string. For CSV files, you can also provide the raw text content. For Excel files (.xls, .xlsx), content must be base64 encoded. Optional if FilePath is provided."},
+                    "FilePath": {"type": "string", "description": "Local file path to upload to S3. If provided, this takes precedence over Body parameter. The file will be read from the local filesystem and uploaded. Must be a valid path to a .xls, .xlsx, or .csv file. Optional if Body is provided."},
+                    "ContentType": {"type": "string", "description": "A standard MIME type describing the format of the contents. Common types: 'text/csv' for CSV, 'application/vnd.ms-excel' for .xls, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' for .xlsx. If not specified, the system will infer it from the file extension."},
+                },
+                "required": ["Bucket", "Key"]
+            }
         )
     ]
 
@@ -255,7 +269,7 @@ async def handle_call_tool(
     try:
         match name:
             case "ListBuckets":
-                buckets = boto3_s3_client.list_buckets(**arguments)
+                buckets = await s3_resource.list_buckets()
                 return [
                     TextContent(
                         type="text",
@@ -263,7 +277,10 @@ async def handle_call_tool(
                     )
                 ]
             case "ListObjectsV2":
-                objects = boto3_s3_client.list_objects_v2(**arguments)
+                bucket = arguments.get("Bucket")
+                prefix = arguments.get("Prefix", "")
+                max_keys = arguments.get("MaxKeys", 1000)
+                objects = await s3_resource.list_objects(bucket, prefix, max_keys)
                 return [
                     TextContent(
                         type="text",
@@ -271,15 +288,138 @@ async def handle_call_tool(
                     )
                 ]
             case "GetObject":
-                response = boto3_s3_client.get_object(**arguments)
-                file_content = response['Body'].read().decode('utf-8')
+                bucket = arguments.get("Bucket")
+                key = arguments.get("Key")
+                response = await s3_resource.get_object(bucket, key)
+                if isinstance(response['Body'], bytes):
+                    file_content = response['Body'].decode('utf-8')
+                else:
+                    file_content = str(response['Body'])
                 return [
                     TextContent(
                         type="text",
-                        text=str(file_content)
+                        text=file_content
+                    )
+                ]
+            case "PutObject":
+                bucket = arguments.get("Bucket")
+                key = arguments.get("Key")
+                body_content = arguments.get("Body")
+                file_path = arguments.get("FilePath")
+                content_type = arguments.get("ContentType")
+                
+                # Validate bucket restriction
+                if bucket != "protex-intelligence-artifacts":
+                    raise ValueError("PutObject is restricted to 'protex-intelligence-artifacts' bucket only")
+                
+                # Validate file extension
+                allowed_extensions = ['.csv', '.xls', '.xlsx']
+                if not any(key.lower().endswith(ext) for ext in allowed_extensions):
+                    raise ValueError(f"Only {', '.join(allowed_extensions)} files are allowed. Provided file: {key}")
+                
+                # Determine if content should be treated as base64 or raw text
+                is_excel_file = key.lower().endswith(('.xls', '.xlsx'))
+                
+                # Handle file path vs body content
+                if file_path:
+                    # Read from local file system
+                    logger.debug(f"Reading file from local path: {file_path}")
+                    
+                    # Validate file path and extension
+                    if not os.path.exists(file_path):
+                        raise ValueError(f"File not found: {file_path}")
+                    
+                    if not any(file_path.lower().endswith(ext) for ext in allowed_extensions):
+                        raise ValueError(f"Only {', '.join(allowed_extensions)} files are allowed. Provided file: {file_path}")
+                    
+                    try:
+                        # Read file as binary
+                        with open(file_path, 'rb') as file:
+                            body_bytes = file.read()
+                        
+                        logger.debug(f"Successfully read file {file_path} ({len(body_bytes)} bytes)")
+                        
+                        # Infer content type from file extension if not provided
+                        if not content_type:
+                            if file_path.lower().endswith('.csv'):
+                                content_type = "text/csv"
+                            elif file_path.lower().endswith('.xls'):
+                                content_type = "application/vnd.ms-excel"
+                            elif file_path.lower().endswith('.xlsx'):
+                                content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        
+                    except Exception as e:
+                        raise ValueError(f"Failed to read file {file_path}: {str(e)}")
+                
+                elif body_content:
+                    # Handle body content (base64 or raw text)
+                    if is_excel_file:
+                        # Excel files must be base64 encoded
+                        try:
+                            # Validate base64 content
+                            if not body_content:
+                                raise ValueError("Body content cannot be empty for Excel files")
+                            
+                            # Clean base64 string (remove whitespace, newlines)
+                            clean_body = ''.join(body_content.split())
+                            
+                            # More flexible base64 validation - just check if it can be decoded
+                            # The previous regex was too strict for some valid base64 content
+                            try:
+                                # Test decode to validate base64 format
+                                body_bytes = base64.b64decode(clean_body, validate=True)
+                                logger.debug(f"Successfully decoded base64 Excel content for {key} ({len(body_bytes)} bytes)")
+                            except Exception as decode_error:
+                                # If strict validation fails, try without validation (more permissive)
+                                try:
+                                    body_bytes = base64.b64decode(clean_body)
+                                    logger.debug(f"Successfully decoded base64 Excel content for {key} with permissive mode ({len(body_bytes)} bytes)")
+                                except Exception:
+                                    raise ValueError(f"Invalid base64 format for Excel file - content cannot be decoded")
+                            
+                        except ValueError:
+                            # Re-raise ValueError as-is (our custom messages)
+                            raise
+                        except Exception as e:
+                            raise ValueError(f"Failed to process base64 content for Excel file {key}: {str(e)}")
+                            
+                    else:
+                        # CSV files - try base64 first, then raw text
+                        try:
+                            # Try to decode as base64 first
+                            clean_body = ''.join(body_content.split())
+                            body_bytes = base64.b64decode(clean_body, validate=True)
+                            logger.debug(f"Successfully decoded base64 CSV content for {key}")
+                        except Exception:
+                            # If base64 decode fails, treat as raw text for CSV
+                            body_bytes = body_content.encode('utf-8')
+                            logger.debug(f"Treating CSV content as raw text for {key}")
+                    
+                    # Infer content type if not provided
+                    if not content_type:
+                        if key.lower().endswith('.csv'):
+                            content_type = "text/csv"
+                        elif key.lower().endswith('.xls'):
+                            content_type = "application/vnd.ms-excel"
+                        elif key.lower().endswith('.xlsx'):
+                            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                
+                else:
+                    raise ValueError("Either 'Body' or 'FilePath' parameter must be provided")
+                
+                logger.debug(f"Uploading {key} to {bucket} with content type: {content_type} ({len(body_bytes)} bytes)")
+                
+                response = await s3_resource.put_object(bucket, key, body_bytes, content_type)
+                
+                source_info = f"from file: {file_path}" if file_path else "from body content"
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Successfully uploaded {key} to bucket {bucket} {source_info}. ETag: {response.get('ETag', 'N/A')}, Size: {len(body_bytes)} bytes"
                     )
                 ]
     except Exception as error:
+        logger.error(f"🚨 Tool call error: {str(error)}")
         return [
             TextContent(
                 type="text",

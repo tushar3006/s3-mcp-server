@@ -7,20 +7,53 @@ from botocore.config import Config
 
 logger = logging.getLogger("s3_mcp_server")
 
+AWS_PROFILE = os.environ.get('AWS_PROFILE')
+AWS_REGION = os.environ.get('AWS_REGION')
+
+logger.info(f"🔧 AWS Configuration - Profile: {AWS_PROFILE or 'None'}, Region: {AWS_REGION or 'None'}")
+
+# Global session will be initialized when needed
+s3_session = None
+
+
+def initialize_s3_client():
+    """Initialize S3 session when needed."""
+    global s3_session
+    
+    if s3_session is not None:
+        return  # Already initialized
+    
+    logger.info('🚀 Initializing S3 session...')
+    
+    # Try using AWS profile and fallback to region only
+    if AWS_PROFILE and AWS_REGION:
+        logger.info('✅ Using AWS credentials from environment variables')
+        s3_session = aioboto3.Session(
+            profile_name=AWS_PROFILE,
+            region_name=AWS_REGION
+        )
+    elif AWS_REGION:
+        logger.info('✅ Using AWS region from environment variables')
+        s3_session = aioboto3.Session(region_name=AWS_REGION)
+    else:
+        logger.error('❌ No AWS credentials or region provided')
+        raise ValueError('No AWS credentials or region provided')
+
+    logger.info(f'✅ S3 session initialized with profile: {AWS_PROFILE or "default"}')
+
+
 class S3Resource:
     """
     S3 Resource provider that handles interactions with AWS S3 buckets.
     Part of a collection of resource providers (S3, DynamoDB, etc.) for the MCP server.
     """
 
-    def __init__(self, region_name: str = None, profile_name: str = None, max_buckets: int = 5):
+    def __init__(self, max_buckets: int = 5):
         """
-              Initialize S3 resource provider
-              Args:
-                  region_name: AWS region name
-                  profile_name: AWS profile name
-                  max_buckets: Maximum number of buckets to process (default: 5)
-              """
+        Initialize S3 resource provider
+        Args:
+            max_buckets: Maximum number of buckets to process (default: 5)
+        """
         # Configure boto3 with retries and timeouts
         self.config = Config(
             retries=dict(
@@ -32,8 +65,6 @@ class S3Resource:
             max_pool_connections=50
         )
 
-        self.session = aioboto3.Session()
-        self.region_name = region_name
         self.max_buckets = max_buckets
         self.configured_buckets = self._get_configured_buckets()
 
@@ -67,7 +98,7 @@ class S3Resource:
         """
         List S3 buckets using async client with pagination
         """
-        async with self.session.client('s3', region_name=self.region_name) as s3:
+        async with s3_session.client('s3', region_name=AWS_REGION) as s3:
             if self.configured_buckets:
                 # If buckets are configured, only return those
                 response = await s3.list_buckets()
@@ -105,10 +136,10 @@ class S3Resource:
         """
         #
         if self.configured_buckets and bucket_name not in self.configured_buckets:
-            logger.warning(f"Bucket {bucket_name} not in configured bucket list")
+            logger.warning(f"⚠️  Bucket {bucket_name} not in configured bucket list")
             return []
 
-        async with self.session.client('s3', region_name=self.region_name) as s3:
+        async with s3_session.client('s3', region_name=AWS_REGION) as s3:
             response = await s3.list_objects_v2(
                 Bucket=bucket_name,
                 Prefix=prefix,
@@ -130,8 +161,8 @@ class S3Resource:
 
         while attempt < max_retries:
             try:
-                async with self.session.client('s3',
-                                               region_name=self.region_name,
+                async with s3_session.client('s3',
+                                               region_name=AWS_REGION,
                                                config=self.config) as s3:
 
                     # Get the object and its stream
@@ -155,17 +186,75 @@ class S3Resource:
                 attempt += 1
                 if attempt < max_retries:
                     wait_time = 2 ** attempt
-                    logger.warning(f"Attempt {attempt} failed, retrying in {wait_time} seconds: {str(e)}")
+                    logger.warning(f"🔄 Attempt {attempt} failed, retrying in {wait_time}s: {str(e)}")
                     await asyncio.sleep(wait_time)
                 continue
 
         raise last_exception or Exception("Failed to get object after all retries")
 
+    async def put_object(self, bucket_name: str, key: str, body: bytes, content_type: str = None, max_retries: int = 3) -> Dict[str, Any]:
+        """
+        Upload an object to S3 bucket - RESTRICTED to protex-intelligence-artifacts bucket only
+        Args:
+            bucket_name: Name of the S3 bucket (must be protex-intelligence-artifacts)
+            key: Object key (file path) in the bucket
+            body: File content as bytes
+            content_type: MIME type of the content
+            max_retries: Maximum number of retry attempts
+        """
+        # Strict validation: only allow uploads to protex-intelligence-artifacts bucket
+        allowed_upload_bucket = "protex-intelligence-artifacts"
+        if bucket_name != allowed_upload_bucket:
+            raise ValueError(f"Upload not allowed to bucket '{bucket_name}'. Only '{allowed_upload_bucket}' is permitted for uploads.")
+        
+        # Strict validation: only allow specific file types
+        allowed_extensions = {'.xls', '.xlsx', '.csv'}
+        file_extension = None
+        for ext in allowed_extensions:
+            if key.lower().endswith(ext):
+                file_extension = ext
+                break
+        
+        if not file_extension:
+            allowed_ext_str = ', '.join(allowed_extensions)
+            raise ValueError(f"File type not allowed. Only {allowed_ext_str} files are permitted for upload. File: {key}")
+
+        attempt = 0
+        last_exception = None
+
+        while attempt < max_retries:
+            try:
+                async with s3_session.client('s3',
+                                               region_name=AWS_REGION,
+                                               config=self.config) as s3:
+
+                    put_args = {
+                        'Bucket': bucket_name,
+                        'Key': key,
+                        'Body': body
+                    }
+                    
+                    if content_type:
+                        put_args['ContentType'] = content_type
+
+                    response = await s3.put_object(**put_args)
+                    logger.info(f"✅ Successfully uploaded {key} to {bucket_name}")
+                    return response
+
+            except Exception as e:
+                last_exception = e
+                attempt += 1
+                if attempt < max_retries:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"🔄 Upload attempt {attempt} failed, retrying in {wait_time}s: {str(e)}")
+                    await asyncio.sleep(wait_time)
+                continue
+
+        raise last_exception or Exception("Failed to upload object after all retries")
+
     def is_text_file(self, key: str) -> bool:
-        """Determine if a file is text-based by its extension"""
-        text_extensions = {
-            '.txt', '.log', '.json', '.xml', '.yml', '.yaml', '.md',
-            '.csv', '.ini', '.conf', '.py', '.js', '.html', '.css',
-            '.sh', '.bash', '.cfg', '.properties'
-        }
+        """Determine if a file is text-based by its extension - now restricted to allowed upload types"""
+        # Only CSV files are considered text files among our allowed types
+        # .xls and .xlsx are binary Excel formats
+        text_extensions = {'.csv'}
         return any(key.lower().endswith(ext) for ext in text_extensions)
