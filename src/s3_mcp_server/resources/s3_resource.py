@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 import aioboto3
 import asyncio
 from botocore.config import Config
+import re
 
 logger = logging.getLogger("s3_mcp_server")
 
