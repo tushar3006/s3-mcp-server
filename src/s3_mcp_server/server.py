@@ -244,7 +244,24 @@ async def put_object(ctx: Context, bucket: str, key: str, body: Optional[str] = 
         return f"Error: {str(error)}"
 
 
+
+def health_check():
+    """Print health status message."""
+    print('MCP server active')
+
+
 def main():
+    """Run the MCP server with CLI argument support."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='AWS Lambda MCP Server')
+    parser.add_argument('--health', action='store_true', help='Check server health')
+    args = parser.parse_args()
+    
+    # Handle health check
+    if args.health:
+        health_check()
+        return
+    
     """Run the MCP server with FastMCP."""
     mcp.run()
 
