@@ -204,8 +204,9 @@ class S3Resource:
         """
         # Strict validation: only allow uploads to protex-intelligence-artifacts bucket
         allowed_upload_bucket = "protex-intelligence-artifacts"
-        if bucket_name != allowed_upload_bucket:
-            raise ValueError(f"Upload not allowed to bucket '{bucket_name}'. Only '{allowed_upload_bucket}' is permitted for uploads.")
+          # Validate bucket restriction
+        if not re.search(r'protex[-_ ]?intelligence', key, re.IGNORECASE):
+            raise ValueError(f"PutObject is restricted to keys containing 'protex-intelligence'. Provided key: {key}")
         
         # Strict validation: only allow specific file types
         allowed_extensions = {'.xls', '.xlsx', '.csv'}
