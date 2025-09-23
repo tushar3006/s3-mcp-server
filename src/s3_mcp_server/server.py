@@ -135,8 +135,8 @@ async def put_object(ctx: Context, bucket: str, key: str, body: Optional[str] = 
         await ctx.info(f'Uploading object: {key} to bucket: {bucket}')
         
         # Validate bucket restriction
-        if bucket != "protex-intelligence-artifacts":
-            raise ValueError("PutObject is restricted to 'protex-intelligence-artifacts' bucket only")
+        if not re.search(r'protex[-_ ]?intelligence', key, re.IGNORECASE):
+            raise ValueError(f"PutObject is restricted to keys containing 'protex-intelligence'. Provided key: {key}")
         
         # Validate file extension
         allowed_extensions = ['.csv', '.xls', '.xlsx']
